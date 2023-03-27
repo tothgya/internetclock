@@ -7,7 +7,6 @@
 ***************************************************************************************/
  
 #include <ESP8266WiFi.h>
-#include <ESP8266WiFiMulti.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>               // include NTPClient library
 #include <TimeLib.h>                 // include Arduino time library
@@ -24,9 +23,6 @@ const long defaultTimezoneOffset = 1 * 60 * 60; // ? hours * 60 * 60
 const long updateInterval = 1 * 1000 * 60 * 60 * 24; // 24 hours
  
 WiFiUDP ntpUDP;
-ESP8266WiFiMulti WiFiMulti;
-
- 
 // 'time.nist.gov' is used (default server) with +1 hour offset (3600 seconds) 60 seconds (60000 milliseconds) update interval
 NTPClient timeClient(ntpUDP, "time.nist.gov", defaultTimezoneOffset, updateInterval);
 TM1637Display display(CLK, DIO);
@@ -37,31 +33,27 @@ IPAddress subnet(255, 255, 255, 0);
 IPAddress dns(192, 168, 0, 1);
 IPAddress googledns(8, 8, 8, 8);
 
+uint8_t segments[] = {0, 0, 0, 0};
  
 void setup(void)
 {
  
   Serial.begin(9600);
   display.setBrightness(0x01);
-  delay(1000);
+  delay(2000);
 
   wifisetup();
  
   timeClient.setTimeOffset(getTimeZoneOffset());
   timeClient.begin();
 
-
 }
 
 void wifisetup() {
   int rt = 0;
   int s = 0;
-  uint8_t segments[] = {0, 0, 0, 0};
 //  WiFi.config(ip, gateway, subnet, dns, googledns);
   WiFi.mode(WIFI_STA);
-  Serial.println("Old settings");
-  Serial.println(WiFi.SSID().c_str());
-  Serial.println(WiFi.psk().c_str());
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
   WiFi.begin(WiFi.SSID().c_str(), WiFi.psk().c_str());
@@ -152,23 +144,35 @@ int getTimeZoneOffset() {
 
     WiFiClient client;
     HTTPClient http;
-    http.begin(client, "http://worldtimeapi.org/api/timezone/Europe/Budapest");
-    int httpCode = http.GET();    
-    StaticJsonDocument<768> doc;
-
-    DeserializationError error = deserializeJson(doc, http.getString());
-
-    http.end();
-    
-    if (error) {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.f_str());
-      return defaultTimezoneOffset;
+    int retryCount = 3;
+    while(retryCount > 0) {
+      http.begin(client, "http://worldtimeapi.org/api/timezone/Europe/Budapest");
+      int httpCode = http.GET();
+      if(httpCode > 0) {       
+        StaticJsonDocument<768> doc;
+        DeserializationError error = deserializeJson(doc, http.getString());
+        
+        if (error) {
+          Serial.print(F("deserializeJson() failed: "));
+          Serial.println(error.f_str());
+        } else {
+          int raw_offset = doc["raw_offset"];
+          int dst_offset = doc["dst_offset"];
+          Serial.println("Timezone offset is:");
+          Serial.println(dst_offset + raw_offset);
+          http.end();
+          return dst_offset + raw_offset; // 3600
+        }
+      }
+      http.end();
+      segments[0] = SEG_A + SEG_E +SEG_F + SEG_D; // C
+      segments[1] = 0;
+      segments[2] = 0;
+      segments[3] = display.encodeDigit(retryCount);
+      display.setSegments(segments);
+      retryCount--;
+      delay(1000);
     }
-    int raw_offset = doc["raw_offset"];
-    int dst_offset = doc["dst_offset"];
-    Serial.println("Timezone offset is:");
-    Serial.println(dst_offset + raw_offset);
-    return dst_offset + raw_offset; // 3600
+    return defaultTimezoneOffset;
 }
 // End of code.
